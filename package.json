@@ -1,0 +1,12 @@
+{
+  "name": "readmeta",
+  "version": "1.0.0",
+  "description": "Reads meta data from Mike Brady's shairport-sync",
+  "main": "index.js",
+  "repository": "github.com/SteveMacAwesome/shairport-sync-readmeta",
+  "author": "Ben Allen <ben@2gears.com>",
+  "license": "MIT",
+  "dependencies": {
+    "ramda": "^0.26.1"
+  }
+}
