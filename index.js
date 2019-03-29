@@ -1,14 +1,18 @@
 const R = require('ramda');
-const DEBUG = true;
+const DEBUG = false;
 
 let statusVars = {
+	id: null, // mper, should be unique id of track
 	image: null, // PICT
 	title: null, // minm
 	album: null, // asal
 	artist: null, // asar
 	genre: null, // asgn
 	composer: null, // ascp
-	kind: null, // file kind, asdt
+	playing: false, //pbeg, pend
+	volume: null, //pvol
+	device: null, //pnam
+	progress: null // prgr
 };
 
 // Set up express server that will push socketIO messages to the client
@@ -58,7 +62,7 @@ const processLine = line => {
 
 	const typeVal = type && getEncVal(type);
 	const codeVal = code && getEncVal(code);
-	const dataVal = data && (codeVal === 'PICT' ? removeTags(data) : getDataVal(data));
+	const dataVal = data && ((codeVal === 'PICT' || codeVal === 'mper') ? removeTags(data) : getDataVal(data));
 
 	return {
 		type: typeVal,
@@ -66,6 +70,37 @@ const processLine = line => {
 		data: dataVal,
 	};
 }
+
+const processVolume = volume => {
+	const dBvol = R.head(volume.split(','));
+	const linearVol = Math.max(0, ((10 / 3) * dBvol) + 100);
+
+	return Math.round(linearVol);
+}
+
+const getDuration = length => `${Math.floor(length / 60)}:${Math.round(length % 60).toString().padStart(2, 0)}`;
+
+const processProgress = progress => {
+	const [start, now, end] = progress.split('/');
+
+	const length = (end - start) / 44100;
+	const position = (now - start) / 44100;
+
+
+	const duration = getDuration(length);
+	const startPos = getDuration(position);
+
+	if (DEBUG) {
+		console.log(`length:`, length);
+		console.log(`position:`, position);
+		console.log(`duration:`, duration)
+	}
+	return {
+		duration,
+		position: Math.round(position)
+	}
+}
+
 
 console.log('Opening stdin stream...');
 process.stdin.on('readable', async () => {
@@ -93,16 +128,18 @@ process.stdin.on('readable', async () => {
 			const inputItems = inputString.replace(/<\/item>/gm, '</item>:!:').split(':!:');
 			const cleanedItems = R.without('', inputItems);
 
-			 if (!R.last(cleanedItems).endsWith('</item>')) {
-				 // Must not be done yet, wait for more data
-				 return;
-			 }
+			if (!R.last(cleanedItems).endsWith('</item>')) {
+				// Must not be done yet, wait for more data
+				return;
+			}
 
 			const mapped = R.map(processLine, inputItems);
 
-			console.log('\n\n\n');
-			console.log(mapped);
-			console.log('\n\n\n');
+			if (DEBUG) {
+				console.log('\n\n');
+				console.log(mapped);
+				console.log('\n\n');
+			}
 
 			// Iterate over mapped and set status vars accordingly
 			const newStatusVars = R.reduce((acc, item) => {
@@ -117,10 +154,20 @@ process.stdin.on('readable', async () => {
 						return R.assoc('artist', item.data, acc);
 					case 'ascp':
 						return R.assoc('composer', item.data, acc);
-					case 'asdt':
-						return R.assoc('kind', item.data, acc);
 					case 'asgn':
 						return R.assoc('genre', item.data, acc);
+					case 'pbeg':
+						return R.assoc('playing', true, acc);
+					case 'pend':
+						return R.assoc('playing', false, acc);
+					case 'pvol':
+						return R.assoc('volume', processVolume(item.data), acc);
+					case 'pnam':
+						return R.assoc('device', item.data, acc);
+					case 'prgr':
+						return R.assoc('progress', processProgress(item.data), acc);
+					case 'mper':
+						return R.assoc('id', item.data, acc);
 					default:
 						return acc;
 				}
@@ -132,12 +179,28 @@ process.stdin.on('readable', async () => {
 			if (DEBUG) {
 				console.log('\n\n\n');
 				console.log('statusVars', R.omit(['image'], statusVars));
+				console.log('image :', Boolean(statusVars.image));
 				console.log('\n\n\n');
 			}
 
 			// Send off to any socketIO client that cares to listen
-			console.log('emitting...');
-			io.emit('update', statusVars);
+			if (statusVars.end) {
+				if (DEBUG) {
+					console.log('emitting...');
+				}
+
+				io.emit('update', {
+					image: null,
+					kind: null,
+					album: null,
+					artist: null,
+					title: null,
+					genre: null,
+					composer: null,
+				});
+			} else {
+				io.emit('update', statusVars);
+			}
 
 			// Empty out the buffer
 			inputBuffer = Buffer.alloc(0);
